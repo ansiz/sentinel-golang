@@ -102,17 +102,20 @@ func entry(resource string, options *EntryOptions) (*base.SentinelEntry, *base.B
 		Args:         options.args,
 		Attachments:  options.attachments,
 	}
+	ctx.Data = make(map[interface{}]interface{})
 
 	e := base.NewSentinelEntry(ctx, rw, sc)
-
 	r := sc.Entry(ctx)
 	if r == nil {
 		// This indicates internal error in some slots, so just pass
 		return e, nil
 	}
 	if r.Status() == base.ResultStatusBlocked {
+		// r will be put to Pool in calling Exit()
+		// must finish the lifecycle of r.
+		blockErr := base.NewBlockErrorFromDeepCopy(r.BlockError())
 		e.Exit()
-		return nil, r.BlockError()
+		return nil, blockErr
 	}
 
 	return e, nil

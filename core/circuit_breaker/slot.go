@@ -2,7 +2,6 @@ package circuit_breaker
 
 import (
 	"github.com/alibaba/sentinel-golang/core/base"
-	"time"
 )
 
 type CircuitBreakerSlot struct {
@@ -10,26 +9,23 @@ type CircuitBreakerSlot struct {
 
 func (b *CircuitBreakerSlot) Check(ctx *base.EntryContext) *base.TokenResult {
 	resource := ctx.Resource.Name()
+	result := ctx.RuleCheckResult
 	if len(resource) == 0 {
-		return base.NewTokenResultPass()
+		return result
 	}
-	return checkPass(ctx)
+	if !checkPass(ctx) {
+		result.ResetToBlockedFrom(base.BlockTypeCircuitBreaking, "CircuitBreaking")
+	}
+	return result
 }
 
-func checkPass(ctx *base.EntryContext) *base.TokenResult {
+func checkPass(ctx *base.EntryContext) bool {
 	breakers := getResBreakers(ctx.Resource.Name())
 	for _, breaker := range breakers {
-		r := breaker.Check(ctx)
-		if r.Status() == base.ResultStatusBlocked {
-			return r
-		}
-		if r.Status() == base.ResultStatusShouldWait {
-			if waitMs := r.WaitMs(); waitMs > 0 {
-				// Handle waiting action.
-				time.Sleep(time.Duration(waitMs) * time.Millisecond)
-			}
-			continue
+		isPass := breaker.TryPass(ctx)
+		if !isPass {
+			return false
 		}
 	}
-	return base.NewTokenResultPass()
+	return true
 }
