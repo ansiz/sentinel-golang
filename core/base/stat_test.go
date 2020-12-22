@@ -79,9 +79,9 @@ func (m *StatNodeMock) DecreaseConcurrency() {
 	return
 }
 
-func (m *StatNodeMock) GenerateReadStat(sampleCount uint32, intervalInMs uint32) (ReadStat, error) {
+func (m *StatNodeMock) GenerateReadStat(sampleCount uint32, intervalInMs uint32) ReadStat {
 	args := m.Called(sampleCount, intervalInMs)
-	return args.Get(0).(ReadStat), args.Error(1)
+	return args.Get(0).(ReadStat)
 }
 
 func TestCheckValidityForReuseStatistic(t *testing.T) {
