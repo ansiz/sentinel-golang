@@ -328,10 +328,7 @@ func generateStatFor(rule *Rule) (*standaloneStatistic, error) {
 	err := base.CheckValidityForReuseStatistic(sampleCount, intervalInMs, config.GlobalStatisticSampleCountTotal(), config.GlobalStatisticIntervalMsTotal())
 	if err == nil {
 		// global statistic reusable
-		readStat, e := resNode.GenerateReadStat(sampleCount, intervalInMs)
-		if e != nil {
-			return nil, e
-		}
+		readStat:= resNode.GenerateReadStat(sampleCount, intervalInMs)
 		retStat.reuseResourceStat = true
 		retStat.readOnlyMetric = readStat
 		retStat.writeOnlyMetric = nil
@@ -340,10 +337,7 @@ func generateStatFor(rule *Rule) (*standaloneStatistic, error) {
 		logging.Info("[FlowRuleManager] Flow rule couldn't reuse global statistic and will generate independent statistic", "rule", rule)
 		retStat.reuseResourceStat = false
 		realLeapArray := sbase.NewBucketLeapArray(sampleCount, intervalInMs)
-		metricStat, e := sbase.NewSlidingWindowMetric(sampleCount, intervalInMs, realLeapArray)
-		if e != nil {
-			return nil, errors.Errorf("fail to generate statistic for warm up rule: %+v, err: %+v", rule, e)
-		}
+		metricStat:= sbase.NewSlidingWindowMetric(sampleCount, intervalInMs, realLeapArray)
 		retStat.readOnlyMetric = metricStat
 		retStat.writeOnlyMetric = realLeapArray
 		return &retStat, nil

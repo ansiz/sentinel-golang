@@ -1,22 +1,9 @@
-// Copyright 1999-2020 Alibaba Group Holding Ltd.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package base
 
 import (
 	"reflect"
 	"sync/atomic"
+	"fmt"
 
 	"github.com/alibaba/sentinel-golang/core/base"
 	"github.com/alibaba/sentinel-golang/logging"
@@ -36,21 +23,42 @@ type SlidingWindowMetric struct {
 }
 
 // It must pass the parameter point to the real storage entity
-func NewSlidingWindowMetric(sampleCount, intervalInMs uint32, real *BucketLeapArray) (*SlidingWindowMetric, error) {
-	if real == nil {
-		return nil, errors.New("nil BucketLeapArray")
+func NewSlidingWindowMetric(sampleCount, intervalInMs uint32, real *BucketLeapArray) *SlidingWindowMetric {
+	if real == nil || intervalInMs <= 0 || sampleCount <= 0 {
+		panic(fmt.Sprintf("Illegal parameters,intervalInMs=%d,sampleCount=%d,real=%+v.", intervalInMs, sampleCount, real))
 	}
-	if err := base.CheckValidityForReuseStatistic(sampleCount, intervalInMs, real.SampleCount(), real.IntervalInMs()); err != nil {
-		return nil, err
+
+	if intervalInMs%sampleCount != 0 {
+		panic(fmt.Sprintf("Invalid parameters, intervalInMs is %d, sampleCount is %d.", intervalInMs, sampleCount))
 	}
 	bucketLengthInMs := intervalInMs / sampleCount
+
+	parentIntervalInMs := real.IntervalInMs()
+	parentBucketLengthInMs := real.BucketLengthInMs()
+
+	// bucketLengthInMs of BucketLeapArray must be divisible by bucketLengthInMs of SlidingWindowMetric
+	// for example: bucketLengthInMs of BucketLeapArray is 500ms, and bucketLengthInMs of SlidingWindowMetric is 2000ms
+	// for example: bucketLengthInMs of BucketLeapArray is 500ms, and bucketLengthInMs of SlidingWindowMetric is 500ms
+	if bucketLengthInMs%parentBucketLengthInMs != 0 {
+		panic(fmt.Sprintf("BucketLeapArray's BucketLengthInMs(%d) is not divisible by SlidingWindowMetric's BucketLengthInMs(%d).", parentBucketLengthInMs, bucketLengthInMs))
+	}
+
+	if intervalInMs > parentIntervalInMs {
+		// todo if SlidingWindowMetric's intervalInMs is greater than BucketLeapArray.
+		panic(fmt.Sprintf("The interval(%d) of SlidingWindowMetric is greater than parent BucketLeapArray(%d).", intervalInMs, parentIntervalInMs))
+	}
+
+	// 10 * 1000 ms == parent
+	if parentIntervalInMs%intervalInMs != 0 {
+		panic(fmt.Sprintf("SlidingWindowMetric's intervalInMs(%d) is not divisible by real BucketLeapArray's intervalInMs(%d).", intervalInMs, parentIntervalInMs))
+	}
 
 	return &SlidingWindowMetric{
 		bucketLengthInMs: bucketLengthInMs,
 		sampleCount:      sampleCount,
 		intervalInMs:     intervalInMs,
 		real:             real,
-	}, nil
+	}
 }
 
 // Get the start time range of the bucket for the provided time.
@@ -89,7 +97,10 @@ func (m *SlidingWindowMetric) GetSum(event base.MetricEvent) int64 {
 }
 
 func (m *SlidingWindowMetric) getSumWithTime(now uint64, event base.MetricEvent) int64 {
-	satisfiedBuckets := m.getSatisfiedBuckets(now)
+	start, end := m.getBucketStartRange(now)
+	satisfiedBuckets := m.real.ValuesConditional(now, func(ws uint64) bool {
+		return ws >= start && ws <= end
+	})
 	return m.count(event, satisfiedBuckets)
 }
 
@@ -105,17 +116,12 @@ func (m *SlidingWindowMetric) getQPSWithTime(now uint64, event base.MetricEvent)
 	return float64(m.getSumWithTime(now, event)) / m.getIntervalInSecond()
 }
 
-func (m *SlidingWindowMetric) getSatisfiedBuckets(now uint64) []*BucketWrap {
+func (m *SlidingWindowMetric) GetMaxOfSingleBucket(event base.MetricEvent) int64 {
+	now := util.CurrentTimeMillis()
 	start, end := m.getBucketStartRange(now)
 	satisfiedBuckets := m.real.ValuesConditional(now, func(ws uint64) bool {
 		return ws >= start && ws <= end
 	})
-	return satisfiedBuckets
-}
-
-func (m *SlidingWindowMetric) GetMaxOfSingleBucket(event base.MetricEvent) int64 {
-	now := util.CurrentTimeMillis()
-	satisfiedBuckets := m.getSatisfiedBuckets(now)
 	var curMax int64 = 0
 	for _, w := range satisfiedBuckets {
 		mb := w.Value.Load()
@@ -138,7 +144,10 @@ func (m *SlidingWindowMetric) GetMaxOfSingleBucket(event base.MetricEvent) int64
 
 func (m *SlidingWindowMetric) MinRT() float64 {
 	now := util.CurrentTimeMillis()
-	satisfiedBuckets := m.getSatisfiedBuckets(now)
+	start, end := m.getBucketStartRange(now)
+	satisfiedBuckets := m.real.ValuesConditional(now, func(ws uint64) bool {
+		return ws >= start && ws <= end
+	})
 	minRt := base.DefaultStatisticMaxRt
 	for _, w := range satisfiedBuckets {
 		mb := w.Value.Load()
@@ -182,7 +191,7 @@ func (m *SlidingWindowMetric) SecondMetricsOnCondition(predicate base.TimePredic
 			wm[secStart] = []*BucketWrap{w}
 		}
 	}
-	items := make([]*base.MetricItem, 0, 8)
+	items := make([]*base.MetricItem, 0)
 	for ts, values := range wm {
 		if len(values) == 0 {
 			continue
@@ -214,6 +223,7 @@ func (m *SlidingWindowMetric) metricItemFromBuckets(ts uint64, ws []*BucketWrap)
 		item.BlockQps += uint64(mb.Get(base.MetricEventBlock))
 		item.ErrorQps += uint64(mb.Get(base.MetricEventError))
 		item.CompleteQps += uint64(mb.Get(base.MetricEventComplete))
+		item.MonitorBlockQps += uint64(mb.Get(base.MetricEventMonitorBlock))
 		allRt += mb.Get(base.MetricEventRt)
 	}
 	if item.CompleteQps > 0 {
@@ -237,11 +247,12 @@ func (m *SlidingWindowMetric) metricItemFromBucket(w *BucketWrap) *base.MetricIt
 	}
 	completeQps := mb.Get(base.MetricEventComplete)
 	item := &base.MetricItem{
-		PassQps:     uint64(mb.Get(base.MetricEventPass)),
-		BlockQps:    uint64(mb.Get(base.MetricEventBlock)),
-		ErrorQps:    uint64(mb.Get(base.MetricEventError)),
-		CompleteQps: uint64(completeQps),
-		Timestamp:   w.BucketStart,
+		PassQps:         uint64(mb.Get(base.MetricEventPass)),
+		BlockQps:        uint64(mb.Get(base.MetricEventBlock)),
+		MonitorBlockQps: uint64(mb.Get(base.MetricEventMonitorBlock)),
+		ErrorQps:        uint64(mb.Get(base.MetricEventError)),
+		CompleteQps:     uint64(completeQps),
+		Timestamp:       w.BucketStart,
 	}
 	if completeQps > 0 {
 		item.AvgRt = uint64(mb.Get(base.MetricEventRt) / completeQps)

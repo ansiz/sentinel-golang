@@ -112,7 +112,7 @@ type StatNode interface {
 
 	// GenerateReadStat generates the readonly metric statistic based on resource level global statistic
 	// If parameters, sampleCount and intervalInMs, are not suitable for resource level global statistic, return (nil, error)
-	GenerateReadStat(sampleCount uint32, intervalInMs uint32) (ReadStat, error)
+	GenerateReadStat(sampleCount uint32, intervalInMs uint32) (ReadStat)
 }
 
 var (

@@ -34,7 +34,7 @@ type BaseStatNode struct {
 
 func NewBaseStatNode(sampleCount uint32, intervalInMs uint32) *BaseStatNode {
 	la := sbase.NewBucketLeapArray(config.GlobalStatisticSampleCountTotal(), config.GlobalStatisticIntervalMsTotal())
-	metric, _ := sbase.NewSlidingWindowMetric(sampleCount, intervalInMs, la)
+	metric:= sbase.NewSlidingWindowMetric(sampleCount, intervalInMs, la)
 	return &BaseStatNode{
 		concurrency: 0,
 		sampleCount: sampleCount,
@@ -92,7 +92,7 @@ func (n *BaseStatNode) DecreaseConcurrency() {
 	atomic.AddInt32(&(n.concurrency), -1)
 }
 
-func (n *BaseStatNode) GenerateReadStat(sampleCount uint32, intervalInMs uint32) (base.ReadStat, error) {
+func (n *BaseStatNode) GenerateReadStat(sampleCount uint32, intervalInMs uint32) (base.ReadStat) {
 	return sbase.NewSlidingWindowMetric(sampleCount, intervalInMs, n.arr)
 }
 
